@@ -16,8 +16,9 @@ import byotrack
 import byotrack.api.features_extractor
 import byotrack.dataset.ctc as ctc_data
 from byotrack.implementation.optical_flow import skimage as sk, opencv
-from byotrack.implementation.linker.frame_by_frame import nearest_neighbor, kalman_linker, koft
+from byotrack.implementation.linker.frame_by_frame import nearest_neighbor, kalman_linker, koft, trackabyo
 from byotrack.implementation.refiner.interpolater import ForwardBackwardInterpolater
+import byotrack.implementation.refiner.smoother as smooth
 import byotrack.metrics.ctc as ctc_metrics
 
 
@@ -69,6 +70,22 @@ def link(video: byotrack.Video, detections_sequence: Sequence[byotrack.Detection
     specs: kalman_linker.FrameByFrameLinkerParameters
     linker: kalman_linker.FrameByFrameLinker
     optflow: byotrack.OpticalFlow
+    if kwargs["linker"] == "TrackaByo":
+        specs = TrackaByoParameters(
+            association_method="sparse_opt_smooth",
+            n_valid=1,
+            n_gap=kwargs["n_gap"],
+            anisotropy=(kwargs["anisotropy"], 1.0, 1.0),  # For 3D anisotrope datasets
+            split_factor=kwargs["split_factor"],
+        )
+        #Load the Trackastra Model
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = NewTrackastra.from_pretrained("ctc", device)
+        linker = TrackaByoLinker(specs, model)
+        tracks = linker.run(video, detections_sequence)
+        return smooth.RTSSmoother(
+            kwargs["detection_std"], kwargs["process_std"], 0, linker.specs.anisotropy
+        ).run(video, tracks)
     if kwargs["linker"] == "NN":  # NN
         specs = nearest_neighbor.NearestNeighborParameters(
             association_threshold=kwargs["association_threshold"],  # Greedy is good
